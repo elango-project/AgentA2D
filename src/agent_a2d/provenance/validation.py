@@ -107,3 +107,63 @@ def validate_memory_object(
     else:
         if obj.supersedes_object_id is not None:
             raise InvalidStatusTransitionError("Version 1 cannot supersede.")
+
+
+def validate_trace(trace: "Trace") -> None:
+    """Validate full Trace structure and internal reference integrity.
+    
+    Verifies:
+    - Session index order (Session 1, Session 2)
+    - Session-to-Event ownership consistency
+    - Snapshot ID consistency
+    - Object reference resolution
+    """
+    from agent_a2d.core.types import Trace
+    from agent_a2d.core.errors import BrokenTraceReferenceError, BrokenLineageError
+    
+    # Pre-index events for fast lookup
+    events_by_id = {evt.event_id: evt for evt in trace.events}
+    
+    # 1. Two-session structure (V1 limitation)
+    if len(trace.sessions) != 2:
+        raise BrokenTraceReferenceError(f"Trace must have exactly 2 sessions, found {len(trace.sessions)}")
+        
+    s1, s2 = trace.sessions[0], trace.sessions[1]
+    if s1.session_index != 1 or s2.session_index != 2:
+        raise BrokenTraceReferenceError("Sessions must be index 1 and 2 in order.")
+        
+    # 2. Snapshot consistency
+    if trace.initial_snapshot_id != s1.pre_snapshot_id:
+        raise BrokenTraceReferenceError("Trace initial snapshot != Session 1 pre snapshot")
+    if trace.session_boundary_snapshot_id != s1.post_snapshot_id:
+        raise BrokenTraceReferenceError("Trace boundary snapshot != Session 1 post snapshot")
+    if trace.session_boundary_snapshot_id != s2.pre_snapshot_id:
+        raise BrokenTraceReferenceError("Trace boundary snapshot != Session 2 pre snapshot")
+    if trace.final_snapshot_id != s2.post_snapshot_id:
+        raise BrokenTraceReferenceError("Trace final snapshot != Session 2 post snapshot")
+        
+    # 3. Session <-> Event ownership and references
+    for session in trace.sessions:
+        for evt_id in session.events:
+            if evt_id not in events_by_id:
+                raise BrokenTraceReferenceError(f"Session {session.session_id} references missing event {evt_id}")
+            evt = events_by_id[evt_id]
+            if evt.session_id != session.session_id:
+                raise BrokenTraceReferenceError(
+                    f"Event {evt_id} belongs to {evt.session_id} but referenced by {session.session_id}"
+                )
+
+    # 4. Global Event references
+    for evt in trace.events:
+        found_in_sessions = any(evt.event_id in s.events for s in trace.sessions)
+        if not found_in_sessions:
+            raise BrokenTraceReferenceError(f"Event {evt.event_id} is orphaned (not in any session)")
+
+    # 5. Object reference resolution
+    for evt in trace.events:
+        for obj_id in evt.input_refs:
+            if obj_id not in trace.objects:
+                raise BrokenLineageError(f"Event {evt.event_id} references missing input object {obj_id}")
+        for obj_id in evt.output_refs:
+            if obj_id not in trace.objects:
+                raise BrokenLineageError(f"Event {evt.event_id} references missing output object {obj_id}")
