@@ -92,6 +92,9 @@ class GeminiProviderAdapter(LLMProviderAdapter):
             # response_modalities=["TEXT"], 
         )
         
+        # Disable AFC so the model just returns the function call
+        config.automatic_function_calling = types.AutomaticFunctionCallingConfig(disable=True)
+        
         try:
             response = self.client.models.generate_content(
                 model=self.model_name,
