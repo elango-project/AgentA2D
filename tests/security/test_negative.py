@@ -100,8 +100,10 @@ def test_13_1_trust_enforcement_invalid_trust_basis(hmac_key: bytes):
         )
 
 
+# --- 13.2 Lineage Integrity ---
+
 def test_13_2_lineage_unknown_parent(hmac_key: bytes):
-    """\u00a713.2: MemoryObject with parent_refs containing non-existent object -> REJECT."""
+    """\u00a713.2: unknown parent_refs -> REJECT"""
     from agent_a2d.provenance.middleware import stamp_agent_output
     with pytest.raises(BrokenLineageError):
         stamp_agent_output(
@@ -110,22 +112,26 @@ def test_13_2_lineage_unknown_parent(hmac_key: bytes):
             object_store={}, hmac_key=hmac_key
         )
 
-def test_13_2_lineage_cycle_and_incomplete(hmac_key: bytes):
-    """\u00a713.2: Cycle or incomplete ancestry -> REJECT."""
-    # This is tested implicitly by validate_lineage which stamp_agent_output calls.
-    # In test_lineage.py we cover this heavily. Here we just show broken ancestry rejects.
-    obj = stamp_external_data(
-        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
-    )
-    bad_obj = copy.copy(obj)
-    object.__setattr__(bad_obj, "ancestor_refs", ("missing_ancestor",))
-    # It will fail integrity proof first, but assuming an attacker forged the proof, validate_lineage catches it
+def test_13_2_lineage_cyclic_ancestry(hmac_key: bytes):
+    """\u00a713.2: cyclic ancestry -> REJECT"""
     from agent_a2d.provenance.lineage import validate_lineage
-    with pytest.raises(BrokenLineageError):
-        validate_lineage(bad_obj, {"1": obj})
+    from agent_a2d.core.errors import CyclicLineageError
+    # CyclicLineageError triggers if object's own ID is in parent or ancestor refs
+    o1 = MemoryObject("1", 1, None, "a", "h1", TrustLevel.UNTRUSTED, None, ("1",), ("1",), "x", "s", "e", ObjectStatus.ACTIVE, 1, "p1")
+    with pytest.raises(CyclicLineageError):
+        validate_lineage(o1, {"1": o1})
 
-def test_13_2_lineage_immutable_refs(hmac_key: bytes):
-    """\u00a713.2: Attempt to modify parent_refs/ancestor_refs -> REJECT (FrozenInstanceError)."""
+def test_13_2_lineage_incomplete_ancestor_closure(hmac_key: bytes):
+    """\u00a713.2: incomplete ancestor closure -> REJECT"""
+    from agent_a2d.provenance.lineage import validate_lineage
+    o1 = MemoryObject("1", 1, None, "a", "h1", TrustLevel.UNTRUSTED, None, (), (), "x", "s", "e", ObjectStatus.ACTIVE, 1, "p1")
+    # o2 parent is o1, but ancestor is empty
+    o2 = MemoryObject("2", 1, None, "b", "h2", TrustLevel.UNTRUSTED, None, ("1",), (), "y", "s", "e", ObjectStatus.ACTIVE, 1, "p2")
+    with pytest.raises(BrokenLineageError):
+        validate_lineage(o2, {"1": o1, "2": o2})
+
+def test_13_2_lineage_parent_refs_mutation(hmac_key: bytes):
+    """\u00a713.2: parent_refs mutation -> REJECT"""
     obj = stamp_external_data(
         object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
     )
@@ -133,8 +139,17 @@ def test_13_2_lineage_immutable_refs(hmac_key: bytes):
     with pytest.raises(FrozenInstanceError):
         obj.parent_refs = ("forged",)
 
-def test_13_2_lineage_duplicate_object(hmac_key: bytes):
-    """\u00a713.2: Duplicate object_id -> REJECT (DuplicateObjectError)."""
+def test_13_2_lineage_ancestor_refs_mutation(hmac_key: bytes):
+    """\u00a713.2: ancestor_refs mutation -> REJECT"""
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    from dataclasses import FrozenInstanceError
+    with pytest.raises(FrozenInstanceError):
+        obj.ancestor_refs = ("forged",)
+
+def test_13_2_lineage_duplicate_object_id(hmac_key: bytes):
+    """\u00a713.2: duplicate object_id -> REJECT"""
     obj = stamp_external_data(
         object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
     )
@@ -144,8 +159,8 @@ def test_13_2_lineage_duplicate_object(hmac_key: bytes):
     with pytest.raises(DuplicateObjectError):
         validate_memory_object(bad_obj, {"1": obj}, hmac_key)
 
-def test_13_2_lineage_multiple_parents(hmac_key: bytes):
-    """\u00a713.2: Multiple immediate parents -> ACCEPT."""
+def test_13_2_lineage_multiple_immediate_parents(hmac_key: bytes):
+    """\u00a713.2: multiple immediate parents -> ACCEPT"""
     from agent_a2d.provenance.middleware import stamp_agent_output
     p1 = stamp_external_data(
         object_id="1", content="data1", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
@@ -161,13 +176,131 @@ def test_13_2_lineage_multiple_parents(hmac_key: bytes):
     assert set(obj.parent_refs) == {"1", "2"}
     assert set(obj.ancestor_refs) == {"1", "2"}
 
+def test_13_2_lineage_mixed_trusted_untrusted(hmac_key: bytes):
+    """\u00a713.2: mixed trusted/untrusted lineage -> ACCEPT"""
+    # This is tested implicitly in 13.1, but explicitly adding it here
+    from agent_a2d.provenance.middleware import stamp_agent_output
+    p1 = stamp_protected_assertion(
+        object_id="1", content="auth", trust_basis_ref="sys", parent_refs=[],
+        transformation="auth", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    p2 = stamp_external_data(
+        object_id="2", content="data2", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    obj = stamp_agent_output(
+        object_id="3", content="summary", parent_refs=["1", "2"],
+        transformation="llm", session_id="s", created_event_id="e",
+        object_store={"1": p1, "2": p2}, hmac_key=hmac_key
+    )
+    assert set(obj.parent_refs) == {"1", "2"}
+    assert obj.trust_label == TrustLevel.UNTRUSTED
+
+
+# --- 13.3 Serialization & Integrity ---
+
+def test_13_3_serialization_forged_trust_without_basis(hmac_key: bytes):
+    """\u00a713.3: forged trust without trust_basis_ref -> REJECT"""
+    with pytest.raises(ForgedTrustError):
+        validate_memory_object(
+            MemoryObject(
+                object_id="1", object_version=1, supersedes_object_id=None, content="d", content_hash="mock",
+                trust_label=TrustLevel.TRUSTED, trust_basis_ref=None, parent_refs=(), ancestor_refs=(),
+                transformation="t", session_id="s", created_event_id="e", status=ObjectStatus.ACTIVE,
+                schema_version=1, integrity_proof="p"
+            ), {}, hmac_key
+        )
+
+def test_13_3_serialization_unknown_parent(hmac_key: bytes):
+    """\u00a713.3: unknown parent reference -> REJECT"""
+    from agent_a2d.provenance.lineage import validate_lineage
+    o1 = MemoryObject("1", 1, None, "a", "h1", TrustLevel.UNTRUSTED, None, ("missing",), ("missing",), "x", "s", "e", ObjectStatus.ACTIVE, 1, "p1")
+    with pytest.raises(BrokenLineageError):
+        validate_lineage(o1, {"1": o1})
+
+def test_13_3_serialization_content_hash_mismatch(hmac_key: bytes):
+    """\u00a713.3: content_hash mismatch -> REJECT"""
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    bad_obj = copy.copy(obj)
+    object.__setattr__(bad_obj, "content_hash", "wrong")
+    with pytest.raises(ContentIntegrityError):
+        validate_memory_object(bad_obj, {}, hmac_key)
+
 def test_13_3_serialization_wrong_hmac(hmac_key: bytes):
-    """\u00a713.3: Serialization & Integrity (Negative) -> Wrong HMAC key fails."""
+    """\u00a713.3: modified integrity_proof / wrong HMAC -> REJECT"""
     obj = stamp_external_data(
         object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
     )
     with pytest.raises(IntegrityProofError):
         validate_memory_object(obj, {}, b"wrong_secret")
+
+def test_13_3_serialization_altered_immutable_field(hmac_key: bytes):
+    """\u00a713.3: altered immutable field causing HMAC mismatch -> REJECT"""
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    bad_obj = copy.copy(obj)
+    object.__setattr__(bad_obj, "transformation", "altered")
+    with pytest.raises(IntegrityProofError):
+        validate_memory_object(bad_obj, {}, hmac_key)
+
+def test_13_3_serialization_tampered_status(hmac_key: bytes):
+    """\u00a713.3: tampered status causing HMAC mismatch -> REJECT"""
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    bad_obj = copy.copy(obj)
+    object.__setattr__(bad_obj, "status", ObjectStatus.QUARANTINED)
+    with pytest.raises(IntegrityProofError):
+        validate_memory_object(bad_obj, {}, hmac_key)
+
+def test_13_3_serialization_broken_event_id(hmac_key: bytes):
+    """\u00a713.3: broken created_event_id -> REJECT"""
+    from agent_a2d.core.errors import BrokenTraceReferenceError
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="missing_event", object_store={}, hmac_key=hmac_key
+    )
+    # validate_memory_object checks trace_events if passed
+    with pytest.raises(BrokenTraceReferenceError):
+        validate_memory_object(obj, {}, hmac_key, trace_events={"other_event": {}})
+
+def test_13_3_serialization_unsupported_schema(hmac_key: bytes):
+    """\u00a713.3: unsupported schema_version -> REJECT"""
+    from agent_a2d.core.errors import SchemaVersionError
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    bad_obj = copy.copy(obj)
+    object.__setattr__(bad_obj, "schema_version", 999)
+    with pytest.raises(SchemaVersionError):
+        validate_memory_object(bad_obj, {}, hmac_key)
+
+def test_13_3_serialization_invalid_supersession(hmac_key: bytes):
+    """\u00a713.3: invalid supersedes_object_id/status chain -> REJECT"""
+    obj = stamp_external_data(
+        object_id="1", content="data", session_id="s", created_event_id="e", object_store={}, hmac_key=hmac_key
+    )
+    # v2 with new object_id but missing supersedes_object_id
+    bad_obj = copy.copy(obj)
+    object.__setattr__(bad_obj, "object_id", "2")
+    object.__setattr__(bad_obj, "object_version", 2)
+    object.__setattr__(bad_obj, "supersedes_object_id", None)
+    
+    from agent_a2d.provenance.integrity import compute_integrity_proof
+    proof = compute_integrity_proof(
+        hmac_key=hmac_key, object_id=bad_obj.object_id, object_version=bad_obj.object_version,
+        supersedes_object_id=bad_obj.supersedes_object_id, content=bad_obj.content,
+        content_hash=bad_obj.content_hash, trust_label=bad_obj.trust_label.name,
+        trust_basis_ref=bad_obj.trust_basis_ref, parent_refs=bad_obj.parent_refs,
+        ancestor_refs=bad_obj.ancestor_refs, transformation=bad_obj.transformation,
+        session_id=bad_obj.session_id, created_event_id=bad_obj.created_event_id,
+        status=bad_obj.status.name, schema_version=bad_obj.schema_version
+    )
+    object.__setattr__(bad_obj, "integrity_proof", proof)
+
+    with pytest.raises(InvalidStatusTransitionError):
+        validate_memory_object(bad_obj, {"1": obj}, hmac_key)
 
 def test_13_4_policy_gate_negative(hmac_key: bytes):
     """\u00a713.4: Policy Gate (Negative) -> Missing valid trust authority -> INTERDICT."""
