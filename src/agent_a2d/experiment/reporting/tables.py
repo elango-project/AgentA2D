@@ -21,10 +21,15 @@ class TableGenerator:
         self.reporting_version = reporting_version
 
     def _build_provenance(
-        self, rq: str, metric: str, rule_version: str, trial_ids: List[str], dataset: ValidatedDataset
+        self, rq: str, metric: str, rule_version: str, 
+        eligible_ids: List[str],
+        ineligible_ids: List[str],
+        provider_failure_ids: List[str],
+        quarantine_ids: List[str],
+        dataset: ValidatedDataset
     ) -> DerivedResultProvenance:
         # Deterministically sort trial_ids
-        sorted_trials = sorted(trial_ids)
+        sorted_trials = sorted(eligible_ids)
         
         # Extract the actual result objects matching the trials
         results_to_hash = [r for r in dataset.valid_results if r.trial_id in sorted_trials]
@@ -41,6 +46,9 @@ class TableGenerator:
             metric=metric,
             eligibility_rule_version=rule_version,
             source_trial_ids=sorted_trials,
+            ineligible_trial_ids=sorted(ineligible_ids),
+            provider_failure_trial_ids=sorted(provider_failure_ids),
+            quarantined_trial_ids=sorted(quarantine_ids),
             source_result_hash=source_hash,
             analyzer_version=self.analyzer_version,
             reporting_version=self.reporting_version,
@@ -95,7 +103,10 @@ class TableGenerator:
                 "total_eligible": eligible_count
             }
             
-            prov = self._build_provenance("RQ1", "prevention", rule_version, list(eligible_ids), dataset)
+            ineligible_ids = [e.trial_id for e in el_for_arm if not e.eligible and e.reason != EligibilityReason.PROVIDER_FAILURE]
+            prov_failure_ids = [e.trial_id for e in el_for_arm if e.reason == EligibilityReason.PROVIDER_FAILURE]
+            quarantine_ids = [q.trial_id for q in dataset.quarantine_records if q.trial_id in trial_ids]
+            prov = self._build_provenance("RQ1", "prevention", rule_version, list(eligible_ids), ineligible_ids, prov_failure_ids, quarantine_ids, dataset)
             
             result_tables[arm] = RQSummaryTable(
                 numerator=float(prevented),
@@ -156,7 +167,10 @@ class TableGenerator:
                 "limitation_note": "completion/outcome proxy, not semantic quality"
             }
             
-            prov = self._build_provenance("RQ2", "utility", rule_version, list(eligible_ids), dataset)
+            ineligible_ids = [e.trial_id for e in el_for_arm if not e.eligible and e.reason != EligibilityReason.PROVIDER_FAILURE]
+            prov_failure_ids = [e.trial_id for e in el_for_arm if e.reason == EligibilityReason.PROVIDER_FAILURE]
+            quarantine_ids = [q.trial_id for q in dataset.quarantine_records if q.trial_id in trial_ids]
+            prov = self._build_provenance("RQ2", "utility", rule_version, list(eligible_ids), ineligible_ids, prov_failure_ids, quarantine_ids, dataset)
             
             result_tables[arm] = RQSummaryTable(
                 numerator=float(task_success),
@@ -229,7 +243,10 @@ class TableGenerator:
                     "total_eligible": eligible_count
                 }
                 
-                prov = self._build_provenance("RQ3", metric, rule_version, list(eligible_ids), dataset)
+                ineligible_ids = [e.trial_id for e in el_for_arm if not e.eligible and e.reason != EligibilityReason.PROVIDER_FAILURE]
+                prov_failure_ids = [e.trial_id for e in el_for_arm if e.reason == EligibilityReason.PROVIDER_FAILURE]
+                quarantine_ids = [q.trial_id for q in dataset.quarantine_records if q.trial_id in trial_ids]
+                prov = self._build_provenance("RQ3", metric, rule_version, list(eligible_ids), ineligible_ids, prov_failure_ids, quarantine_ids, dataset)
                 
                 result_tables[metric][arm] = RQSummaryTable(
                     numerator=float(contaminated),
@@ -281,7 +298,10 @@ class TableGenerator:
                     "total_eligible": eligible_count
                 }
                 
-                prov = self._build_provenance("RQ3", metric_key, rule_version, list(eligible_ids), dataset)
+                ineligible_ids = [e.trial_id for e in el_for_arm if not e.eligible and e.reason != EligibilityReason.PROVIDER_FAILURE]
+                prov_failure_ids = [e.trial_id for e in el_for_arm if e.reason == EligibilityReason.PROVIDER_FAILURE]
+                quarantine_ids = [q.trial_id for q in dataset.quarantine_records if q.trial_id in trial_ids]
+                prov = self._build_provenance("RQ3", metric_key, rule_version, list(eligible_ids), ineligible_ids, prov_failure_ids, quarantine_ids, dataset)
                 
                 result_tables[metric_key][arm] = RQSummaryTable(
                     numerator=float(state_count),
@@ -353,7 +373,10 @@ class TableGenerator:
                     "total_eligible": eligible_count
                 }
                 
-                prov = self._build_provenance("RQ4", metric, rule_version, list(eligible_ids), dataset)
+                ineligible_ids = [e.trial_id for e in el_for_cat if not e.eligible and e.reason != EligibilityReason.PROVIDER_FAILURE]
+                prov_failure_ids = [e.trial_id for e in el_for_cat if e.reason == EligibilityReason.PROVIDER_FAILURE]
+                quarantine_ids = [q.trial_id for q in dataset.quarantine_records if q.trial_id in trial_ids]
+                prov = self._build_provenance("RQ4", metric, rule_version, list(eligible_ids), ineligible_ids, prov_failure_ids, quarantine_ids, dataset)
                 
                 result_tables[category][metric] = RQSummaryTable(
                     numerator=float(numerator),
