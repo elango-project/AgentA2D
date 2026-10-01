@@ -104,6 +104,11 @@ def validate_memory_object(
             raise InvalidStatusTransitionError(
                 "Status transition altered content_hash."
             )
+        from agent_a2d.core.enums import VALID_STATUS_TRANSITIONS
+        if (prior.status, obj.status) not in VALID_STATUS_TRANSITIONS:
+            raise InvalidStatusTransitionError(
+                f"Invalid status transition from {prior.status.name} to {obj.status.name}"
+            )
     else:
         if obj.supersedes_object_id is not None:
             raise InvalidStatusTransitionError("Version 1 cannot supersede.")
