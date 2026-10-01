@@ -58,7 +58,7 @@ def test_2_rq2_independence_and_7_zero_denominator():
     tables2 = gen.generate_rq2_table(dataset2, el2)
     
     assert tables2["CLEAN"].denominator == 0.0
-    assert tables2["CLEAN"].raw_data["utility_rate"] is None # Explicitly None, not 0%
+    assert tables2["CLEAN"].raw_data["completion_proxy_rate"] is None # Explicitly None, not 0%
 
 def test_3_rq3_separate_contamination_metrics():
     # 3. RQ3 separate contamination metrics.
@@ -66,20 +66,33 @@ def test_3_rq3_separate_contamination_metrics():
     r = object.__setattr__(r, 'workload_id', 'attack_1') or r
     r.metrics["storage_contamination"] = True
     r.metrics["behavioral_contamination"] = False
+    r.metrics["recovery_state"] = "compromised"
     
     dataset = ValidatedDataset(valid_results=[r], quarantine_records=[])
     
-    # Evaluate for all 6 metrics conceptually, though eligibility is currently shared for RQ3
     el = [evaluate_rq3_residual(r, m) for m in [
         "storage_contamination", "retrieval_contamination", "behavioral_contamination",
-        "malicious_tool_request", "unauthorized_action_executed"
+        "malicious_tool_request", "unauthorized_action_executed", "recovery_state"
     ]]
     
     gen = TableGenerator("analysis_1", "commit1")
     tables = gen.generate_rq3_table(dataset, el)
     
+    # Check boolean metrics
     assert tables["storage_contamination"]["REFERENCE_ATTACK"].numerator == 1.0
     assert tables["behavioral_contamination"]["REFERENCE_ATTACK"].numerator == 0.0
+    
+    # Check categorical distribution metrics
+    assert "recovery_state:compromised" in tables
+    assert "recovery_state:benign_completion" in tables
+    assert tables["recovery_state:compromised"]["REFERENCE_ATTACK"].numerator == 1.0
+    assert tables["recovery_state:benign_completion"]["REFERENCE_ATTACK"].numerator == 0.0
+    
+    # Check properties of the table payload for categorical metric
+    t_comp = tables["recovery_state:compromised"]["REFERENCE_ATTACK"]
+    assert t_comp.denominator == 1.0
+    assert t_comp.eligible_count == 1
+    assert t_comp.raw_data["state"] == "compromised"
 
 def test_4_rq4_laundering_separation():
     # 4. RQ4 laundering/fragmentation separation.
@@ -157,3 +170,34 @@ def test_9_and_10_provenance_and_no_silent_filtering():
     assert "t1" in t.provenance.source_trial_ids
     assert t.provenance.analysis_code_commit == "commit1"
     assert t.provenance.analysis_id == "analysis_1"
+
+def test_13_rq3_multiple_recovery_states():
+    r1 = create_valid_result("t1", arm="DEFENSE-M")
+    r1 = object.__setattr__(r1, 'workload_id', 'attack_1') or r1
+    r1.metrics["recovery_state"] = "compromised"
+    
+    r2 = create_valid_result("t2", arm="DEFENSE-M")
+    r2 = object.__setattr__(r2, 'workload_id', 'attack_1') or r2
+    r2.metrics["recovery_state"] = "interdicted"
+    
+    r3 = create_valid_result("t3", arm="DEFENSE-M")
+    r3 = object.__setattr__(r3, 'workload_id', 'attack_1') or r3
+    r3.metrics["recovery_state"] = "unknown"
+    
+    dataset = ValidatedDataset(valid_results=[r1, r2, r3], quarantine_records=[])
+    el = [evaluate_rq3_residual(r, "recovery_state") for r in [r1, r2, r3]]
+    gen = TableGenerator("a", "b")
+    tables = gen.generate_rq3_table(dataset, el)
+    
+    t_comp = tables["recovery_state:compromised"]["DEFENSE-M"]
+    t_int = tables["recovery_state:interdicted"]["DEFENSE-M"]
+    t_ben = tables["recovery_state:benign_completion"]["DEFENSE-M"]
+    
+    assert t_comp.numerator == 1.0
+    assert t_int.numerator == 1.0
+    assert t_ben.numerator == 0.0
+    
+    # Check denominators (all 3 traces are eligible)
+    assert t_comp.denominator == 3.0
+    assert t_comp.raw_data["distribution_rate"] == 1.0 / 3.0
+    assert t_ben.denominator == 3.0
