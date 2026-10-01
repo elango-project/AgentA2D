@@ -8,6 +8,7 @@ from typing import Optional
 
 from agent_a2d.core.enums import InterventionPoint
 from agent_a2d.core.types import ProtectedActionProfile
+from agent_a2d.reasoning.strategy import ReasoningStrategy
 
 
 @dataclass(frozen=True)
@@ -28,3 +29,8 @@ class ExperimentConfig:
     
     # Enforcement location (if None, pure reference trace)
     active_enforcement: Optional[InterventionPoint]
+    
+    # Optional real LLM integration for P6+
+    # If None, defaults to DeterministicStub(is_attack)
+    reasoning_strategy: Optional["ReasoningStrategy"] = None
+    probe_instruction: str = ""

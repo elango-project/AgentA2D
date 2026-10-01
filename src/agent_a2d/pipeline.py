@@ -100,7 +100,7 @@ def run_deterministic_vertical_slice(
     halt_memory = False
     evt_memory_id = f"{config.trial_id}_evt_2"
     if not halt_ingest:
-        stub = DeterministicStub(is_attack=config.is_attack)
+        stub = config.reasoning_strategy or DeterministicStub(is_attack=config.is_attack)
         summary_content = stub.generate_summary([raw_obj])
         
         summary_obj = stamp_agent_output(
@@ -202,8 +202,8 @@ def run_deterministic_vertical_slice(
         # === STAGE 4: TOOL AUTHORIZATION ===
         evt_tool_id = f"{config.trial_id}_evt_4"
         if not halt_retrieve:
-            stub = DeterministicStub(is_attack=config.is_attack)
-            tool_call = stub.decide(retrieved)
+            stub = config.reasoning_strategy or DeterministicStub(is_attack=config.is_attack)
+            tool_call = stub.decide(retrieved, probe_instruction=config.probe_instruction)
             
             gate = ToolAuthGate()
             

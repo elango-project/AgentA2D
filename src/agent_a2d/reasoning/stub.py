@@ -43,7 +43,8 @@ class DeterministicStub:
 
     def decide(
         self,
-        retrieved_memories: Iterable[MemoryObject]
+        retrieved_memories: Iterable[MemoryObject],
+        probe_instruction: str = ""
     ) -> ToolCall:
         """Simulate LLM reasoning to produce a ToolCall.
         
