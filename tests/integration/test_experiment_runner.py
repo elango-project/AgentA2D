@@ -62,7 +62,7 @@ def test_experiment_active_i_stage_and_not_reached_semantics(base_config: Experi
     
     result = runner.run_trial(cfg, crm, tool)
     
-    assert len(result.reference_trace.events) == 4
+    assert len(result.reference_trace.events) == 5
     
     assert result.active_trace is not None
     assert len(result.active_trace.events) == 1

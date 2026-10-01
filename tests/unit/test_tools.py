@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_a2d.core.enums import StageActionType
+from agent_a2d.core.enums import StageActionType, InterventionPoint
 from agent_a2d.core.types import PolicyContext, ToolCall
 from agent_a2d.provenance.middleware import stamp_external_data
 from agent_a2d.tools.auth_gate import ToolAuthGate
@@ -46,7 +46,10 @@ def test_auth_gate_critical_tool_blocked(hmac_key: bytes):
         object.__setattr__(full, "provenance_chain", (obj,))
         return full
         
-    decision, result = gate.execute_tool(tool_call, context_builder, crm_state)
+    decision, result = gate.execute_tool(
+        tool_call, context_builder, crm_state,
+        active_enforcement=InterventionPoint.TOOL_AUTHORIZATION
+    )
     
     # Policy Evaluator issues INTERDICT, Adapter maps it to DENY_TOOL_ACTION at T
     assert decision.stage_action == StageActionType.DENY_TOOL_ACTION

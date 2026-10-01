@@ -217,7 +217,7 @@ def run_deterministic_vertical_slice(
                     trace_id=config.experiment_id
                 )
             
-            enf_tool, result = gate.execute_tool(tool_call, ctx_builder, crm_state)
+            enf_tool, result = gate.execute_tool(tool_call, ctx_builder, crm_state, config.active_enforcement)
             halt_tool = (config.active_enforcement == InterventionPoint.TOOL_AUTHORIZATION and 
                          enf_tool.stage_action != StageActionType.PERMIT)
             
@@ -229,9 +229,23 @@ def run_deterministic_vertical_slice(
                 input_refs=retrieved_ids,
                 output_refs=(),
                 enforced_decision=enf_tool,
-                metadata={"tool_name": tool_call.action, "halted": halt_tool, "result": result}
+                metadata={"tool_name": tool_call.action, "halted": halt_tool}
             )
             events.append(evt_tool)
+            
+            if not halt_tool:
+                evt_outcome_id = f"{config.trial_id}_evt_5"
+                evt_outcome = TraceEvent(
+                    event_id=evt_outcome_id,
+                    session_id="sess_2",
+                    stage=Stage.ACTION_OUTCOME,
+                    timestamp=clock.now(),
+                    input_refs=(),
+                    output_refs=(),
+                    enforced_decision=None,
+                    metadata={"tool_name": tool_call.action, "result": result}
+                )
+                events.append(evt_outcome)
     
     # SESSION 2 END
     final_snapshot = capture_environment(

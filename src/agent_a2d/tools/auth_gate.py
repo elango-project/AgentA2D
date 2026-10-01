@@ -29,7 +29,8 @@ class ToolAuthGate:
         self,
         tool_call: ToolCall,
         context_builder: Callable[[PolicyContext], PolicyContext],
-        crm_state: Dict[str, Any]
+        crm_state: Dict[str, Any],
+        active_enforcement: InterventionPoint | None = None
     ) -> Tuple[EnforcedDecision, str | None]:
         """Attempt to execute a ToolCall, gated by policy.
         
@@ -56,7 +57,8 @@ class ToolAuthGate:
         decision = self.evaluator.evaluate(full_context)
         enforced_decision = self.adapter.enforce(decision, InterventionPoint.TOOL_AUTHORIZATION)
         
-        if enforced_decision.stage_action != StageActionType.PERMIT:
+        # Only halt execution if this is the active enforcement point
+        if active_enforcement == InterventionPoint.TOOL_AUTHORIZATION and enforced_decision.stage_action != StageActionType.PERMIT:
             return enforced_decision, None
             
         # Execute

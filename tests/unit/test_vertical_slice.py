@@ -32,7 +32,7 @@ def test_benign_vertical_slice(hmac_key: bytes):
     assert trace.attack_id == "none"
     
     # Check events
-    assert len(trace.events) == 4
+    assert len(trace.events) == 5
     assert trace.events[0].stage == Stage.INGESTION
     assert trace.events[1].stage == Stage.MEMORY_WRITE
     assert trace.events[2].stage == Stage.RETRIEVAL
