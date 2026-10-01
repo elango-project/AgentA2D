@@ -38,13 +38,14 @@ class TraceAnalyzer:
         # Since we use timestamp/deterministic IDs, we look at the input/output refs.
         # Actually, in P6 pipeline, the output of MEMORY_WRITE is the stored object.
         malicious_object_id = None
-        for event_id in trace.sessions[0].events:
-            event = events_by_id[event_id]
-            if event.stage == Stage.MEMORY_WRITE and event.output_refs:
-                if trace.attack_id != "none":
-                    malicious_object_id = event.output_refs[0]
-                    metrics["storage_contamination"] = True
-                break
+        if trace.sessions:
+            for event_id in trace.sessions[0].events:
+                event = events_by_id[event_id]
+                if event.stage == Stage.MEMORY_WRITE and event.output_refs:
+                    if trace.attack_id != "none":
+                        malicious_object_id = event.output_refs[0]
+                        metrics["storage_contamination"] = True
+                    break
                 
         # Check Session 2
         if len(trace.sessions) > 1:
