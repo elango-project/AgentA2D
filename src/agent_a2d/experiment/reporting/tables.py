@@ -25,8 +25,15 @@ class TableGenerator:
     ) -> DerivedResultProvenance:
         # Deterministically sort trial_ids
         sorted_trials = sorted(trial_ids)
-        # We can hash the dataset.valid_results for source_result_hash
-        source_hash = compute_digest([r.trial_id for r in dataset.valid_results])
+        
+        # Extract the actual result objects matching the trials
+        results_to_hash = [r for r in dataset.valid_results if r.trial_id in sorted_trials]
+        
+        # Sort them by trial_id to guarantee deterministic ordering
+        results_to_hash.sort(key=lambda r: r.trial_id)
+        
+        # We hash the actual canonical content of the results
+        source_hash = compute_digest(results_to_hash)
         
         return DerivedResultProvenance(
             analysis_id=self.analysis_id,

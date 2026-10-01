@@ -18,6 +18,12 @@ from agent_a2d.experiment.reporting.schema import RQSummaryTable, DerivedResultP
 from agent_a2d.experiment.reporting.provenance import compute_digest, canonical_serialize
 
 @dataclass(frozen=True)
+class RenderMetadata:
+    matplotlib_version: str
+    backend: str
+    python_version: str
+
+@dataclass(frozen=True)
 class FigureData:
     figure_id: str
     title: str
@@ -27,18 +33,17 @@ class FigureData:
     series: List[Dict[str, Any]]
     merged_provenance: DerivedResultProvenance
     limitation_note: Optional[str]
-    env_metadata: Dict[str, str]
 
 class FigureGenerator:
     """Generates reproducible figures exclusively from Phase 3 validated tables."""
     
     def __init__(self, is_synthetic: bool = False):
         self.is_synthetic = is_synthetic
-        self.env_metadata = {
-            "matplotlib_version": MATPLOTLIB_VERSION,
-            "backend": MATPLOTLIB_BACKEND,
-            "python_version": sys.version.split(" ")[0]
-        }
+        self.render_metadata = RenderMetadata(
+            matplotlib_version=MATPLOTLIB_VERSION,
+            backend=MATPLOTLIB_BACKEND,
+            python_version=sys.version.split(" ")[0]
+        )
         
     def _merge_provenance(self, tables: List[RQSummaryTable], rq: str, metric: str) -> DerivedResultProvenance:
         if not tables:
@@ -46,13 +51,20 @@ class FigureGenerator:
             
         base = tables[0].provenance
         all_trials = set()
+        composition = []
+        
         for t in tables:
             all_trials.update(t.provenance.source_trial_ids)
+            composition.append({
+                "source_trial_ids": sorted(t.provenance.source_trial_ids),
+                "source_result_hash": t.provenance.source_result_hash
+            })
             
-        sorted_trials = sorted(list(all_trials))
+        # We recompute the source result hash for the merged set by composing the constituent hashes
+        composition.sort(key=lambda x: x["source_result_hash"])
+        merged_hash = compute_digest(composition)
         
-        # We recompute the source result hash for the merged set to maintain deterministic tracking
-        merged_hash = compute_digest(sorted_trials)
+        sorted_trials = sorted(list(all_trials))
         
         return DerivedResultProvenance(
             analysis_id=base.analysis_id,
@@ -97,8 +109,7 @@ class FigureGenerator:
             synthetic_test_data=self.is_synthetic,
             series=series,
             merged_provenance=prov,
-            limitation_note=None,
-            env_metadata=self.env_metadata
+            limitation_note=None
         )
 
     def build_rq2_figure_data(self, rq2_tables: Dict[str, RQSummaryTable]) -> FigureData:
@@ -129,8 +140,7 @@ class FigureGenerator:
             synthetic_test_data=self.is_synthetic,
             series=series,
             merged_provenance=prov,
-            limitation_note=limitation,
-            env_metadata=self.env_metadata
+            limitation_note=limitation
         )
 
     def build_rq3_figure_data(self, rq3_tables: Dict[str, Dict[str, RQSummaryTable]]) -> List[FigureData]:
@@ -165,15 +175,12 @@ class FigureGenerator:
                 synthetic_test_data=self.is_synthetic,
                 series=series,
                 merged_provenance=prov,
-                limitation_note=None,
-                env_metadata=self.env_metadata
+                limitation_note=None
             ))
             
         # 2. Categorical metric: recovery_state
         recovery_keys = [k for k in rq3_tables.keys() if k.startswith("recovery_state:")]
         if recovery_keys:
-            # We want to group this differently. We have tables per (state, arm).
-            # Series should probably list arms, and within each arm, the distribution.
             arms = set()
             for k in recovery_keys:
                 arms.update(rq3_tables[k].keys())
@@ -189,7 +196,6 @@ class FigureGenerator:
                         all_tables.append(t)
                         state = t.raw_data.get("state")
                         dist[state] = t.raw_data.get("state_count", 0)
-                        # the denominator is the same for all states in this arm
                         eligible_count = t.eligible_count
                 
                 series.append({
@@ -207,8 +213,7 @@ class FigureGenerator:
                 synthetic_test_data=self.is_synthetic,
                 series=series,
                 merged_provenance=prov,
-                limitation_note=None,
-                env_metadata=self.env_metadata
+                limitation_note=None
             ))
             
         return figures
@@ -236,8 +241,7 @@ class FigureGenerator:
                     synthetic_test_data=self.is_synthetic,
                     series=series,
                     merged_provenance=prov,
-                    limitation_note=None,
-                    env_metadata=self.env_metadata
+                    limitation_note=None
                 ))
         return figures
 
@@ -253,31 +257,46 @@ class FigureGenerator:
             
         plt.figure(figsize=(10, 6))
         
-        # Very basic rendering logic just to prove it doesn't crash and respects data
         arms = []
         rates = []
+        na_indices = []
         
         if figure_data.metric == "recovery_state":
-            # Categorical rendering proxy
-            for s in figure_data.series:
+            for i, s in enumerate(figure_data.series):
                 arms.append(s["arm"])
-                # sum of counts just to have a bar
-                rates.append(sum(s["distribution"].values()))
+                if s["total_eligible"] == 0:
+                    rates.append(0.0)
+                    na_indices.append(i)
+                else:
+                    rates.append(sum(s["distribution"].values()))
         elif figure_data.rq == "RQ4":
-            for s in figure_data.series:
+            for i, s in enumerate(figure_data.series):
                 arms.append(s["category"])
                 val = s.get("rate")
-                rates.append(val if val is not None else 0.0)
+                if val is None:
+                    rates.append(0.0)
+                    na_indices.append(i)
+                else:
+                    rates.append(val)
         else:
-            for s in figure_data.series:
+            for i, s in enumerate(figure_data.series):
                 arms.append(s["arm"])
-                # Safely handle None/unavailable rates by plotting 0 but could annotate
-                # "unavailable" if we wanted.
-                rate_key = [k for k in s.keys() if "rate" in k][0]
-                val = s.get(rate_key)
-                rates.append(val if val is not None else 0.0)
+                rate_keys = [k for k in s.keys() if "rate" in k]
+                rate_key = rate_keys[0] if rate_keys else None
+                val = s.get(rate_key) if rate_key else None
                 
+                if val is None:
+                    rates.append(0.0)
+                    na_indices.append(i)
+                else:
+                    rates.append(val)
+                    
         plt.bar(arms, rates, color='gray')
+        
+        # Explicitly annotate N/A for unavailable data (e.g. zero denominator)
+        for idx in na_indices:
+            plt.text(idx, 0.02, "N/A", ha='center', va='bottom', color='red', fontweight='bold')
+            
         plt.title(figure_data.title)
         plt.xlabel("Category / Arm")
         plt.ylabel("Value (Rate or Count)")
