@@ -201,3 +201,47 @@ def test_13_rq3_multiple_recovery_states():
     assert t_comp.denominator == 3.0
     assert t_comp.raw_data["distribution_rate"] == 1.0 / 3.0
     assert t_ben.denominator == 3.0
+
+def test_14_zero_and_missing_recovery_state():
+    from agent_a2d.experiment.reporting.validator import DataValidationGate
+    
+    # 1. Zero observation state
+    r1 = create_valid_result("t1", arm="DEFENSE-M")
+    r1 = object.__setattr__(r1, 'workload_id', 'attack_1') or r1
+    r1.metrics["recovery_state"] = "compromised"
+    
+    # We only have one trace. "interdicted", "benign_completion", "unknown" have ZERO observations.
+    dataset = ValidatedDataset(valid_results=[r1], quarantine_records=[])
+    el = [evaluate_rq3_residual(r1, "recovery_state")]
+    
+    gen = TableGenerator("a", "b")
+    tables = gen.generate_rq3_table(dataset, el)
+    
+    # Verify explicitly emitted zero states
+    for state in ["compromised", "interdicted", "benign_completion", "unknown"]:
+        t = tables[f"recovery_state:{state}"]["DEFENSE-M"]
+        assert t.denominator == 1.0
+        if state == "compromised":
+            assert t.numerator == 1.0
+        else:
+            assert t.numerator == 0.0
+            
+    # 2. Missing / Invalid recovery_state goes to quarantine, not silent deletion
+    gate = DataValidationGate()
+    
+    # Missing key entirely
+    r_missing = create_valid_result("t_miss")
+    del r_missing.metrics["recovery_state"]
+    ds_missing = gate.validate([r_missing])
+    assert len(ds_missing.valid_results) == 0
+    assert len(ds_missing.quarantine_records) == 1
+    assert "Missing required metric" in ds_missing.quarantine_records[0].reason
+    
+    # Invalid value
+    r_invalid = create_valid_result("t_inv")
+    r_invalid.metrics["recovery_state"] = "some_invented_state"
+    ds_invalid = gate.validate([r_invalid])
+    assert len(ds_invalid.valid_results) == 0
+    assert len(ds_invalid.quarantine_records) == 1
+    assert "Invalid recovery_state domain" in ds_invalid.quarantine_records[0].reason
+
