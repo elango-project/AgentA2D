@@ -76,6 +76,22 @@ class AccountingRecord:
     rq_ineligible: Dict[str, int]
 
 @dataclass(frozen=True)
+class ScientificExecutionContext:
+    """The stable identity defining the scientific experiment boundaries.
+    Excludes all generation timestamps, paths, and rendering variables."""
+    experiment_id: str
+    experiment_execution_commit: str
+    experiment_execution_ref: str
+    p6_protocol_version: str
+    schema_version: int
+    provider: str
+    model: str
+    prompt_config_version: str
+    policy_version: str
+    workload_version: str
+    seed: Optional[int]
+
+@dataclass(frozen=True)
 class PackageManifest:
     package_id: str
     experiment_id: str

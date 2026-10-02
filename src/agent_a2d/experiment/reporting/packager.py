@@ -127,7 +127,10 @@ class PackagingValidationGate:
             raise PackagingIntegrityError(f"Figure composite hash mismatch for {figure.figure_id}. Expected {expected_hash}, got {figure.merged_provenance.source_result_hash}")
 
 
+from agent_a2d.experiment.reporting.schema import ScientificExecutionContext
+
 def compute_scientific_digest(
+    context: ScientificExecutionContext,
     dataset: ValidatedDataset,
     eligibility_decisions: List[EligibilityResult],
     rq_tables: Dict[str, Any],
@@ -142,6 +145,9 @@ def compute_scientific_digest(
     canonical scientific component -> component SHA-256 -> sorted (logical_name, component_hash) pairs -> final SHA-256
     """
     components = []
+    
+    # 0. Scientific Execution Context
+    components.append(("scientific_execution_context", compute_digest(context)))
     
     # 1. Raw results
     sorted_raw = sorted(dataset.valid_results, key=lambda r: r.trial_id)
