@@ -4,6 +4,7 @@ from agent_a2d.experiment.reporting.schema import (
     PackagingIntegrityError, DerivedResultProvenance
 )
 from agent_a2d.experiment.reporting.figures import FigureData
+from agent_a2d.experiment.reporting.provenance import compute_digest
 
 class PackagingValidationGate:
     """Performs cross-layer validation before generating the evidence package."""
@@ -30,24 +31,23 @@ class PackagingValidationGate:
                     _extract_tables(v)
         _extract_tables(rq_tables)
         
-        table_provs = []
-        all_table_trials = set()
+        # Map table hashes to tables for figure verification
+        table_hash_map = {}
         for t in all_tables:
-            table_provs.append(t.provenance)
-            all_table_trials.update(t.provenance.source_trial_ids)
-            all_table_trials.update(t.provenance.ineligible_trial_ids)
-            all_table_trials.update(t.provenance.provider_failure_trial_ids)
-            all_table_trials.update(t.provenance.quarantined_trial_ids)
-            self._validate_provenance_populations(t.provenance, known_raw_trials, "Table")
+            # DEFECT 1 Fix: Verify table source_result_hash cryptographically binds to actual source content
+            self._verify_table_provenance(t.provenance, dataset, known_raw_trials)
+            table_key = (t.provenance.rq, t.provenance.metric, t.provenance.source_result_hash)
+            table_hash_map[table_key] = t
             
         # 3. Extract derived trial IDs from figures
         for f in figures:
-            self._validate_provenance_populations(f.merged_provenance, known_raw_trials, "Figure")
-            
-            # Orphan check: figure must map to existing tables
-            fig_trials = set(f.merged_provenance.source_trial_ids) | set(f.merged_provenance.ineligible_trial_ids) | set(f.merged_provenance.provider_failure_trial_ids) | set(f.merged_provenance.quarantined_trial_ids)
-            if not fig_trials.issubset(all_table_trials):
-                raise PackagingIntegrityError(f"Figure {f.figure_id} contains orphan trial IDs not present in upstream tables.")
+            # DEFECT 2 Fix: Verify figure provenance against constituent tables
+            self._verify_figure_provenance(f, table_hash_map)
+            # Also verify figure populations aren't orphan (subsumed by table check, but we do it anyway)
+            all_refs = set(f.merged_provenance.source_trial_ids) | set(f.merged_provenance.ineligible_trial_ids) | set(f.merged_provenance.provider_failure_trial_ids) | set(f.merged_provenance.quarantined_trial_ids)
+            unknown = all_refs - known_raw_trials
+            if unknown:
+                raise PackagingIntegrityError(f"Figure references unknown trial IDs: {unknown}")
             
         # 4. Check for forbidden scientific conclusion fields in manifest
         bad_words = ["winner", "best", "ranking", "significance", "semantic utility"]
@@ -76,8 +76,51 @@ class PackagingValidationGate:
             if eligible + ineligible + acc.provider_failures != acc.valid:
                 raise PackagingIntegrityError(f"Accounting mismatch for {rq}: populations do not sum to valid total.")
 
-    def _validate_provenance_populations(self, prov: DerivedResultProvenance, known_trials: set, source_type: str):
+    def _verify_table_provenance(self, prov: DerivedResultProvenance, dataset: ValidatedDataset, known_trials: set):
+        """Cryptographically verifies source_result_hash against the canonical source result content."""
         all_refs = set(prov.source_trial_ids) | set(prov.ineligible_trial_ids) | set(prov.provider_failure_trial_ids) | set(prov.quarantined_trial_ids)
         unknown = all_refs - known_trials
         if unknown:
-            raise PackagingIntegrityError(f"{source_type} references unknown trial IDs: {unknown}")
+            raise PackagingIntegrityError(f"Table references unknown trial IDs: {unknown}")
+            
+        # Extract the actual source result objects referenced by the eligible source_trial_ids
+        sorted_trials = sorted(prov.source_trial_ids)
+        results_to_hash = [r for r in dataset.valid_results if r.trial_id in sorted_trials]
+        
+        # We MUST ensure no IDs are missing from valid_results if they were in source_trial_ids
+        if len(results_to_hash) != len(sorted_trials):
+            raise PackagingIntegrityError("Mismatch between source_trial_ids and actual extracted results")
+            
+        # Sort deterministically
+        results_to_hash.sort(key=lambda r: r.trial_id)
+        
+        # Compute expected hash
+        expected_hash = compute_digest(results_to_hash)
+        if expected_hash != prov.source_result_hash:
+            raise PackagingIntegrityError(f"Source hash mismatch. Expected {expected_hash}, got {prov.source_result_hash}")
+
+    def _verify_figure_provenance(self, figure: FigureData, table_hash_map: Dict[str, RQSummaryTable]):
+        """Verifies the figure's merged composite hash against its exact constituent tables."""
+        composition = []
+        for identity in figure.constituent_table_identities:
+            # We created a composite key in table_hash_map using (rq, metric, source_result_hash)
+            table_key = (identity["rq"], identity["metric"], identity["source_result_hash"])
+            if table_key not in table_hash_map:
+                raise PackagingIntegrityError(f"Figure {figure.figure_id} references unknown constituent table: {identity}")
+            
+            t = table_hash_map[table_key]
+            composition.append({
+                "rq": t.provenance.rq,
+                "metric": t.provenance.metric,
+                "source_trial_ids": sorted(t.provenance.source_trial_ids),
+                "ineligible_trial_ids": sorted(t.provenance.ineligible_trial_ids),
+                "provider_failure_trial_ids": sorted(t.provenance.provider_failure_trial_ids),
+                "quarantined_trial_ids": sorted(t.provenance.quarantined_trial_ids),
+                "source_result_hash": t.provenance.source_result_hash
+            })
+            
+        composition.sort(key=lambda x: x["source_result_hash"])
+        expected_hash = compute_digest(composition)
+        
+        if expected_hash != figure.merged_provenance.source_result_hash:
+            raise PackagingIntegrityError(f"Figure composite hash mismatch for {figure.figure_id}. Expected {expected_hash}, got {figure.merged_provenance.source_result_hash}")

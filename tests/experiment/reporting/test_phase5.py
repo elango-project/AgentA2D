@@ -76,12 +76,12 @@ def test_04_orphan_derived_artifact_rejection():
     t1 = tp1.create_valid_result("t1", "CLEAN")
     dataset = ValidatedDataset(valid_results=[t1], quarantine_records=[])
     
-    f = FigureData("f1", "title", "RQ1", "prevention", False, [], prov, None)
+    f = FigureData("f1", "title", "RQ1", "prevention", False, [], prov, [{"rq": "bad", "metric": "bad", "source_result_hash": "bad"}], None)
     acc = AccountingRecord(1, 1, 0, 0, {}, {})
     manifest = PackageManifest("", "", "", "", "", "", "v1", 1, "", "", acc, {}, "")
     
     # Empty tables, but figure exists -> orphan figure
-    with pytest.raises(PackagingIntegrityError, match="orphan trial IDs"):
+    with pytest.raises(PackagingIntegrityError, match="unknown constituent table"):
         gate.validate_inputs(dataset, {}, [f], manifest)
         
 def test_05_metadata_accounting_rejections():
