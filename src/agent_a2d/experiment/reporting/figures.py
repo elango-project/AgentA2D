@@ -32,6 +32,7 @@ class FigureData:
     synthetic_test_data: bool
     series: List[Dict[str, Any]]
     merged_provenance: DerivedResultProvenance
+    constituent_table_identities: List[Dict[str, str]]
     limitation_note: Optional[str]
 
 class FigureGenerator:
@@ -51,12 +52,23 @@ class FigureGenerator:
             
         base = tables[0].provenance
         all_trials = set()
+        all_ineligible = set()
+        all_prov_failures = set()
+        all_quarantined = set()
         composition = []
         
         for t in tables:
             all_trials.update(t.provenance.source_trial_ids)
+            all_ineligible.update(t.provenance.ineligible_trial_ids)
+            all_prov_failures.update(t.provenance.provider_failure_trial_ids)
+            all_quarantined.update(t.provenance.quarantined_trial_ids)
             composition.append({
+                "rq": t.provenance.rq,
+                "metric": t.provenance.metric,
                 "source_trial_ids": sorted(t.provenance.source_trial_ids),
+                "ineligible_trial_ids": sorted(t.provenance.ineligible_trial_ids),
+                "provider_failure_trial_ids": sorted(t.provenance.provider_failure_trial_ids),
+                "quarantined_trial_ids": sorted(t.provenance.quarantined_trial_ids),
                 "source_result_hash": t.provenance.source_result_hash
             })
             
@@ -64,14 +76,15 @@ class FigureGenerator:
         composition.sort(key=lambda x: x["source_result_hash"])
         merged_hash = compute_digest(composition)
         
-        sorted_trials = sorted(list(all_trials))
-        
         return DerivedResultProvenance(
             analysis_id=base.analysis_id,
             rq=rq,
             metric=metric,
             eligibility_rule_version=base.eligibility_rule_version,
-            source_trial_ids=sorted_trials,
+            source_trial_ids=sorted(list(all_trials)),
+            ineligible_trial_ids=sorted(list(all_ineligible)),
+            provider_failure_trial_ids=sorted(list(all_prov_failures)),
+            quarantined_trial_ids=sorted(list(all_quarantined)),
             source_result_hash=merged_hash,
             analyzer_version=base.analyzer_version,
             reporting_version=base.reporting_version,
@@ -109,6 +122,7 @@ class FigureGenerator:
             synthetic_test_data=self.is_synthetic,
             series=series,
             merged_provenance=prov,
+            constituent_table_identities=sorted([{"rq": t.provenance.rq, "metric": t.provenance.metric, "source_result_hash": t.provenance.source_result_hash} for t in rq1_tables.values()], key=lambda x: x["source_result_hash"]),
             limitation_note=None
         )
 
@@ -140,6 +154,7 @@ class FigureGenerator:
             synthetic_test_data=self.is_synthetic,
             series=series,
             merged_provenance=prov,
+            constituent_table_identities=sorted([{"rq": t.provenance.rq, "metric": t.provenance.metric, "source_result_hash": t.provenance.source_result_hash} for t in rq2_tables.values()], key=lambda x: x["source_result_hash"]),
             limitation_note=limitation
         )
 
@@ -175,6 +190,7 @@ class FigureGenerator:
                 synthetic_test_data=self.is_synthetic,
                 series=series,
                 merged_provenance=prov,
+                constituent_table_identities=sorted([{"rq": t.provenance.rq, "metric": t.provenance.metric, "source_result_hash": t.provenance.source_result_hash} for t in arm_tables.values()], key=lambda x: x["source_result_hash"]),
                 limitation_note=None
             ))
             
@@ -213,6 +229,7 @@ class FigureGenerator:
                 synthetic_test_data=self.is_synthetic,
                 series=series,
                 merged_provenance=prov,
+                constituent_table_identities=sorted([{"rq": t.provenance.rq, "metric": t.provenance.metric, "source_result_hash": t.provenance.source_result_hash} for t in all_tables], key=lambda x: x["source_result_hash"]),
                 limitation_note=None
             ))
             
@@ -241,6 +258,7 @@ class FigureGenerator:
                     synthetic_test_data=self.is_synthetic,
                     series=series,
                     merged_provenance=prov,
+                    constituent_table_identities=[{"rq": t.provenance.rq, "metric": t.provenance.metric, "source_result_hash": t.provenance.source_result_hash}],
                     limitation_note=None
                 ))
         return figures

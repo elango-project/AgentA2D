@@ -23,6 +23,9 @@ class DerivedResultProvenance:
     metric: str
     eligibility_rule_version: str
     source_trial_ids: List[str]
+    ineligible_trial_ids: List[str]
+    provider_failure_trial_ids: List[str]
+    quarantined_trial_ids: List[str]
     source_result_hash: str
     analyzer_version: str
     reporting_version: str
@@ -57,3 +60,54 @@ class EvidencePackageManifest:
     reporting_version: str
     canonical_content_digest: str
     generation_timestamp: str  # Informational only, excluded from digest math
+
+class ArtifactStatus(str, enum.Enum):
+    GENERATED = "GENERATED"
+    RENDERER_UNAVAILABLE = "RENDERER_UNAVAILABLE"
+    RENDER_FAILED = "RENDER_FAILED"
+
+@dataclass(frozen=True)
+class AccountingRecord:
+    total_input: int
+    valid: int
+    quarantine: int
+    provider_failures: int
+    rq_eligible: Dict[str, int]
+    rq_ineligible: Dict[str, int]
+
+@dataclass(frozen=True)
+class ScientificExecutionContext:
+    """The stable identity defining the scientific experiment boundaries.
+    Excludes all generation timestamps, paths, and rendering variables."""
+    experiment_id: str
+    experiment_execution_commit: str
+    experiment_execution_ref: str
+    p6_protocol_version: str
+    schema_version: int
+    provider: str
+    model: str
+    prompt_config_version: str
+    policy_version: str
+    workload_version: str
+    seed: Optional[int]
+
+@dataclass(frozen=True)
+class PackageManifest:
+    package_id: str
+    experiment_id: str
+    experiment_execution_commit: str
+    experiment_execution_ref: str
+    analysis_code_commit: str
+    package_generation_commit: str
+    p6_protocol_version: str
+    schema_version: int
+    analyzer_version: str
+    reporting_version: str
+    accounting: AccountingRecord
+    artifact_statuses: Dict[str, ArtifactStatus]
+    scientific_content_digest: str
+    archive_digest: Optional[str] = None
+    
+class PackagingIntegrityError(Exception):
+    """Raised when cross-layer validation fails before packaging."""
+    pass

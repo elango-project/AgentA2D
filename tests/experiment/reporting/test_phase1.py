@@ -117,7 +117,9 @@ def test_digest_manifest_excludes_timestamp():
 def test_provenance_fields():
     prov = DerivedResultProvenance(
         analysis_id="a1", rq="RQ1", metric="success_rate", eligibility_rule_version="v1",
-        source_trial_ids=["t1", "t2"], source_result_hash="hash_xy",
+        source_trial_ids=["t1", "t2"], ineligible_trial_ids=[],
+        provider_failure_trial_ids=[], quarantined_trial_ids=[],
+        source_result_hash="hash_xy",
         analyzer_version="v2", reporting_version="v3", analysis_code_commit="c_report"
     )
     assert prov.analysis_code_commit == "c_report"
