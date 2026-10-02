@@ -4,7 +4,8 @@ from agent_a2d.experiment.reporting.schema import (
     PackagingIntegrityError, DerivedResultProvenance
 )
 from agent_a2d.experiment.reporting.figures import FigureData
-from agent_a2d.experiment.reporting.provenance import compute_digest
+from agent_a2d.experiment.reporting.provenance import compute_digest, canonical_serialize
+from agent_a2d.experiment.reporting.eligibility import EligibilityResult
 
 class PackagingValidationGate:
     """Performs cross-layer validation before generating the evidence package."""
@@ -124,3 +125,58 @@ class PackagingValidationGate:
         
         if expected_hash != figure.merged_provenance.source_result_hash:
             raise PackagingIntegrityError(f"Figure composite hash mismatch for {figure.figure_id}. Expected {expected_hash}, got {figure.merged_provenance.source_result_hash}")
+
+
+def compute_scientific_digest(
+    dataset: ValidatedDataset,
+    eligibility_decisions: List[EligibilityResult],
+    rq_tables: Dict[str, Any],
+    figures: List[FigureData]
+) -> str:
+    """
+    Computes the canonical scientific digest over the logical scientific contents.
+    The digest is independent of generation timestamps, filesystem paths, OS details,
+    rendering environment metadata, and archive metadata.
+    
+    Structure:
+    canonical scientific component -> component SHA-256 -> sorted (logical_name, component_hash) pairs -> final SHA-256
+    """
+    components = []
+    
+    # 1. Raw results
+    sorted_raw = sorted(dataset.valid_results, key=lambda r: r.trial_id)
+    components.append(("raw_results", compute_digest(sorted_raw)))
+    
+    # 2. Quarantine records
+    sorted_quarantine = sorted(dataset.quarantine_records, key=lambda q: q.trial_id)
+    components.append(("quarantine_records", compute_digest(sorted_quarantine)))
+    
+    # 3. Eligibility decisions
+    sorted_el = sorted(eligibility_decisions, key=lambda e: (e.rq, e.metric, e.trial_id))
+    components.append(("eligibility_decisions", compute_digest(sorted_el)))
+    
+    # 4. RQ tables
+    all_tables = []
+    def _extract_tables(d, path):
+        for k, v in d.items():
+            if isinstance(v, RQSummaryTable):
+                all_tables.append(("table:" + ":".join(path + [str(k)]), v))
+            elif isinstance(v, dict):
+                _extract_tables(v, path + [str(k)])
+    
+    _extract_tables(rq_tables, [])
+    # Sort by the logical path to guarantee deterministic order
+    all_tables.sort(key=lambda x: x[0])
+    for logical_name, t in all_tables:
+        components.append((logical_name, compute_digest(t)))
+        
+    # 5. FigureData
+    # Sort figures by figure_id
+    sorted_figures = sorted(figures, key=lambda f: f.figure_id)
+    for f in sorted_figures:
+        components.append((f"figure:{f.figure_id}", compute_digest(f)))
+        
+    # Final sort of all (logical_name, hash) pairs
+    components.sort(key=lambda x: x[0])
+    
+    return compute_digest(components)
